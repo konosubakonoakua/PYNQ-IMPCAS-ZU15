@@ -32,7 +32,7 @@ eval "$($FNM env)"
 log "[nodejs] $($FNM --version) installed."
 
 log "[nodejs] Installing Node.js..."
-$FNM install --lts
+$FNM install --arch arm64 --lts
 $FNM use default
 command -v node >/dev/null 2>&1 || die "[nodejs] Node.js installation failed"
 npm config set registry https://registry.npmmirror.com

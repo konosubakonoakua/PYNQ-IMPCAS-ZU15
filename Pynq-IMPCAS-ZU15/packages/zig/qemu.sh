@@ -20,7 +20,7 @@ log "[zig] start"
 ZIG_ARCH=aarch64
 ZIG_URL=https://ziglang.org/download/
 PKG_FOLDER=/tmp/zig
-INSTALL_PREFIX=$HOME/.local/
+INSTALL_PREFIX=$HOME/.local
 SEMVER_GREP_REGEX="[[:digit:]]{1,2}\.[[:digit:]]{1,2}\.[[:digit:]]{1,2}"
 zig_pkg_file_suffix=".tar.xz"
 zig_pkg_file_prefix=$(
@@ -59,7 +59,8 @@ echo "Extracting new zig pkg..."
 tar -xJf $zig_pkg_file -C /opt/zig
 rm -rf $INSTALL_PREFIX/bin/zig
 chmod +x $zig_install_path/zig
-ln -s $(readlink -f $zig_install_path/zig) $(readlink -f $INSTALL_PREFIX/bin/zig)
+mkdir -p $INSTALL_PREFIX/bin/
+ln -s $zig_install_path/zig $INSTALL_PREFIX/bin/zig
 
 echo "Zig installed into $zig_install_path"
 rm -rf $PKG_FOLDER

@@ -1,0 +1,8 @@
+*.log
+*.jou
+__pycache__/
+.ipynb_checkpoints/
+*.str
+*.bit
+*.hwh
+Pynq-IMPCAS-ZU15/petalinux_bsp/hardware_project/base.xsa

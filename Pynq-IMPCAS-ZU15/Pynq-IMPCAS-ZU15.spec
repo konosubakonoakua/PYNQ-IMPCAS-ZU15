@@ -1,0 +1,14 @@
+ARCH_Pynq-IMPCAS-ZU15 := aarch64
+BSP_Pynq-IMPCAS-ZU15 :=
+BITSTREAM_Pynq-IMPCAS-ZU15 := base/base.bit
+FPGA_MANAGER_Pynq-IMPCAS-ZU15 := 1
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 := helper proxy bashrc
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += pynq xrt
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += cynq
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += epics
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += epicspy
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += apt
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += zig rust nodejs
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += vcpkg pwndbg utils
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += ethernet password timezone
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += hostname mybootpy sdcardshrink cleanup

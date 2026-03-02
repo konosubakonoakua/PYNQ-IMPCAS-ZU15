@@ -1,0 +1,112 @@
+diff --git a/sdbuild/packages/arrow/qemu.sh b/sdbuild/packages/arrow/qemu.sh
+index 90438bb8..dd2169e8 100755
+--- a/sdbuild/packages/arrow/qemu.sh
++++ b/sdbuild/packages/arrow/qemu.sh
+@@ -30,6 +30,9 @@ else
+ 	bootstrap=1
+ fi
+ 
++. /etc/environment
++for f in /etc/profile.d/*.sh; do source $f; done
++
+ if [ $bootstrap == 0 ]; then
+ 	# leverage compiled version
+ 	cd /root
+diff --git a/sdbuild/packages/bazel/qemu.sh b/sdbuild/packages/bazel/qemu.sh
+index b55cf09d..68c6d9f4 100755
+--- a/sdbuild/packages/bazel/qemu.sh
++++ b/sdbuild/packages/bazel/qemu.sh
+@@ -22,6 +22,9 @@ else
+ 	bootstrap=1
+ fi
+ 
++. /etc/environment
++for f in /etc/profile.d/*.sh; do source $f; done
++
+ if [ $bootstrap == 0 ]; then
+ 	# leverage compiled version
+ 	cd /root
+diff --git a/sdbuild/packages/glog/qemu.sh b/sdbuild/packages/glog/qemu.sh
+index e02b1bda..d519bf13 100755
+--- a/sdbuild/packages/glog/qemu.sh
++++ b/sdbuild/packages/glog/qemu.sh
+@@ -3,6 +3,9 @@ export HOME=/root
+ set -x
+ set -e
+ 
++. /etc/environment
++for f in /etc/profile.d/*.sh; do source $f; done
++
+ VERSION=0.4.0
+ cd /root
+ wget https://github.com/google/glog/archive/v${VERSION}.zip
+diff --git a/sdbuild/packages/json-c/qemu.sh b/sdbuild/packages/json-c/qemu.sh
+index df62cd95..c8b5afb5 100755
+--- a/sdbuild/packages/json-c/qemu.sh
++++ b/sdbuild/packages/json-c/qemu.sh
+@@ -4,6 +4,9 @@
+ set -e
+ set -x
+ 
++. /etc/environment
++for f in /etc/profile.d/*.sh; do source $f; done
++
+ tag="json-c-0.13.1-20180305"
+ 
+ cd /root
+diff --git a/sdbuild/packages/protobuf/qemu.sh b/sdbuild/packages/protobuf/qemu.sh
+index f1a986fe..a9ae7368 100755
+--- a/sdbuild/packages/protobuf/qemu.sh
++++ b/sdbuild/packages/protobuf/qemu.sh
+@@ -20,6 +20,9 @@ else
+ 	bootstrap=1
+ fi
+ 
++. /etc/environment
++for f in /etc/profile.d/*.sh; do source $f; done
++
+ # either extract from released binary, or build from source
+ if [ $bootstrap == 0 ]; then
+ 	cd /root
+diff --git a/sdbuild/packages/pybind11/qemu.sh b/sdbuild/packages/pybind11/qemu.sh
+index ba5a514b..8a4d9712 100755
+--- a/sdbuild/packages/pybind11/qemu.sh
++++ b/sdbuild/packages/pybind11/qemu.sh
+@@ -1,6 +1,9 @@
+ set -x
+ set -e
+ 
++. /etc/environment
++for f in /etc/profile.d/*.sh; do source $f; done
++
+ VERSION=2.6.0
+ cd /root
+ wget "https://github.com/pybind/pybind11/archive/v${VERSION}.zip"
+diff --git a/sdbuild/packages/ray/qemu.sh b/sdbuild/packages/ray/qemu.sh
+index 0ea1cf3c..99d4527e 100755
+--- a/sdbuild/packages/ray/qemu.sh
++++ b/sdbuild/packages/ray/qemu.sh
+@@ -4,6 +4,9 @@
+ set -e
+ set -x
+ 
++. /etc/environment
++for f in /etc/profile.d/*.sh; do source $f; done
++
+ export HOME=/root
+ export JAVA_HOME="$(dirname $(dirname $(realpath $(which javac))))"
+ VERSION=0.8.3
+diff --git a/sdbuild/packages/xrtlib/qemu.sh b/sdbuild/packages/xrtlib/qemu.sh
+index 2af80cae..9aa59b9a 100755
+--- a/sdbuild/packages/xrtlib/qemu.sh
++++ b/sdbuild/packages/xrtlib/qemu.sh
+@@ -1,6 +1,9 @@
+ set -e
+ set -x
+ 
++. /etc/environment
++for f in /etc/profile.d/*.sh; do source $f; done
++
+ 
+ # Get architecture using uname -m
+ ARCH=$(uname -m)

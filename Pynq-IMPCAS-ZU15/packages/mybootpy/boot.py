@@ -11,7 +11,7 @@ IFACE = "eth0"
 # ==============================
 # User settings (edit these)
 # ==============================
-DESIRED_HOSTNAME = "pynq-impcas-zu9"
+DESIRED_HOSTNAME = "pynq-impcas-zu15"
 
 # Persistent IP (ifupdown)
 DESIRED_ADDRESS = "192.168.138.99"

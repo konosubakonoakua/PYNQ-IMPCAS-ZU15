@@ -16,8 +16,8 @@ DESIRED_HOSTNAME = "pynq-impcas-zu15"
 # Persistent IP (ifupdown)
 DESIRED_ADDRESS = "192.168.138.99"
 DESIRED_NETMASK = "255.255.255.0"
-DESIRED_GATEWAY = "192.168.138.1"
-DESIRED_DNS = ["192.168.138.1", "114.114.114.114"]
+DESIRED_GATEWAY = "192.168.138.254"
+DESIRED_DNS = ["192.168.138.254", "114.114.114.114"]
 
 # Remove eth0:1 completely (persistent + runtime cleanup)
 REMOVE_ETH0_ALIAS = True
@@ -267,6 +267,28 @@ def set_mac_runtime(iface: str, mac: str) -> bool:
     return after == mac.lower()
 
 
+def ensure_default_gateway():
+    current_gw = get_default_gateway()
+    if current_gw != DESIRED_GATEWAY:
+        sh(f"ip route add default via {DESIRED_GATEWAY} || true")
+        return True
+    return False
+
+
+def ensure_systemd_resolved_dns() -> bool:
+    if not DESIRED_DNS:
+        return False
+
+    dns_str = " ".join(DESIRED_DNS)
+    content = f"[Resolve]\nDNS={dns_str}\n"
+
+    # drop-in config
+    changed = file_write_if_changed(
+        "/etc/systemd/resolved.conf.d/10-pynq-dns.conf", content
+    )
+    return changed
+
+
 def main() -> None:
     # Must be root to write /etc and change link settings
     if os.geteuid() != 0:
@@ -303,9 +325,8 @@ def main() -> None:
     has_desired_ip = any(
         cidr.startswith(f"{DESIRED_ADDRESS}/") for cidr in current_addrs
     )
-    gw_ok = get_default_gateway() == DESIRED_GATEWAY
 
-    if not has_desired_ip or not gw_ok:
+    if not has_desired_ip:
         networking_apply_needed = True
 
     if networking_apply_needed:
@@ -324,21 +345,33 @@ def main() -> None:
             link_changed = ensure_persistent_mac_link(IFACE, DESIRED_MAC)
             if APPLY_MAC_RUNTIME_NOW:
                 ok = set_mac_runtime(IFACE, DESIRED_MAC)
-                # If runtime MAC still didn't change, reboot might still be required,
-                # but you already confirmed ip link set works on your system.
                 if not ok:
                     reboot_needed = True
             if link_changed and REBOOT_IF_LINK_CHANGED:
                 reboot_needed = True
 
-    # 6) Ensure .local reflects current hostname and current IP set
+    # 6) Ensure Gateway (MUST be after MAC changes)
+    gw_ok = get_default_gateway() == DESIRED_GATEWAY
+    if not gw_ok:
+        print(f"[boot.py] ensure default gateway {DESIRED_GATEWAY}")
+        ensure_default_gateway()
+    else:
+        print(f"[boot.py] default gateway : {get_default_gateway()}")
+
+    # 7) Ensure systemd-resolved DNS
+    if ensure_systemd_resolved_dns():
+        print("[boot.py] DNS configuration updated, restarting systemd-resolved")
+        sh("systemctl restart systemd-resolved || true")
+
+    # 8) Ensure .local reflects current hostname and current IP set
     if avahi_restart_needed:
         restart_avahi()
 
-    # 7) Show final state
+    # 9) Show final state
     sh(f"ip link show {IFACE}")
     sh(f"ip -4 addr show {IFACE}")
     sh("ip route show default || true")
+    sh("resolvectl status || true")
     sh("hostname")
     sh(
         "systemctl --no-pager --full status avahi-daemon 2>/dev/null | head -n 25 || true"

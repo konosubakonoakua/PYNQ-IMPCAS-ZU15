@@ -16,8 +16,8 @@ DESIRED_HOSTNAME = "pynq-impcas-zu15"
 # Persistent IP (ifupdown)
 DESIRED_ADDRESS = "192.168.138.99"
 DESIRED_NETMASK = "255.255.255.0"
-DESIRED_GATEWAY = "192.168.138.254"
-DESIRED_DNS = ["192.168.138.254", "114.114.114.114"]
+DESIRED_GATEWAY = "192.168.138.1"
+DESIRED_DNS = ["192.168.138.1", "114.114.114.114"]
 
 # Remove eth0:1 completely (persistent + runtime cleanup)
 REMOVE_ETH0_ALIAS = True

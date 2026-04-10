@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import time
+import datetime
 from pathlib import Path
 
 IFACE = "eth0"
@@ -12,28 +13,20 @@ IFACE = "eth0"
 # User settings (edit these)
 # ==============================
 DESIRED_HOSTNAME = "pynq-impcas-zu15"
-
-# Persistent IP (ifupdown)
+DESIRED_MAC = "00:12:34:56:78:9a"
 DESIRED_ADDRESS = "192.168.138.99"
 DESIRED_NETMASK = "255.255.255.0"
 DESIRED_GATEWAY = "192.168.138.1"
 DESIRED_DNS = ["192.168.138.1", "114.114.114.114"]
+DESIRED_NTP_SERVER = "192.168.138.254"
 
-# Remove eth0:1 completely (persistent + runtime cleanup)
 REMOVE_ETH0_ALIAS = True
-
-# Persistent MAC via systemd .link
-# Set to None to skip MAC changes.
-DESIRED_MAC = "00:12:34:56:78:9a"
-
-# If DESIRED_MAC differs from current MAC:
-# - If True: attempt to change MAC immediately at runtime (may drop link)
-# - If False: only write .link and let it take effect on next reboot
 APPLY_MAC_RUNTIME_NOW = True
-
-# If True and .link content changed, reboot once (optional).
-# In most cases you can keep this False because runtime MAC apply + .link is enough.
 REBOOT_IF_LINK_CHANGED = False
+
+# Minimum acceptable year. If the system year is below this,
+# it assumes the RTC battery is dead/missing and forces an NTP jump.
+MIN_VALID_YEAR = 2026
 # ==============================
 
 
@@ -67,7 +60,6 @@ def get_current_mac(iface: str) -> str:
 
 def get_current_ipv4_addrs(iface: str) -> list[str]:
     s = out(f"ip -4 addr show {iface}")
-    # returns list like ["192.168.138.101/24", "192.168.138.99/24", ...]
     addrs = []
     for line in s.splitlines():
         line = line.strip()
@@ -86,9 +78,8 @@ def get_default_gateway() -> str:
 
 
 def apply_ifupdown_runtime() -> None:
-    # This may drop SSH if IP changes.
-    sh("ifdown eth0 >/dev/null 2>&1 || true")
-    sh("ifup eth0 >/dev/null 2>&1 || true")
+    sh(f"ifdown {IFACE} >/dev/null 2>&1 || true")
+    sh(f"ifup {IFACE} >/dev/null 2>&1 || true")
 
 
 def restart_avahi() -> None:
@@ -98,7 +89,6 @@ def restart_avahi() -> None:
 def set_persistent_hostname(hostname: str) -> bool:
     changed = False
     changed |= file_write_if_changed("/etc/hostname", hostname + "\n")
-
     hosts_path = Path("/etc/hosts")
     lines = hosts_path.read_text().splitlines() if hosts_path.exists() else []
     new_lines = []
@@ -111,21 +101,16 @@ def set_persistent_hostname(hostname: str) -> bool:
             new_lines.append(line)
     if not replaced:
         new_lines.append(f"127.0.1.1    {hostname}")
-
     changed |= file_write_if_changed("/etc/hosts", "\n".join(new_lines) + "\n")
-
-    # Apply immediately as well
     current = out("hostname || true")
     if current != hostname:
         sh(f"hostname {hostname}")
         changed = True
-
     return changed
 
 
 def desired_ifupdown_eth0_content() -> str:
     dns_line = " ".join(DESIRED_DNS)
-    # Rewrite deterministically to ensure eth0:1 is gone
     lines = [
         "auto eth0",
         "iface eth0 inet static",
@@ -139,247 +124,183 @@ def desired_ifupdown_eth0_content() -> str:
 
 
 def remove_eth0_alias_configs() -> bool:
-    """
-    Permanently remove any eth0:1 definitions from /etc/network/interfaces.d/* by rewriting eth0 file
-    and optionally deleting other files that define eth0:1.
-    Returns True if any file changes were made.
-    """
     changed = False
-
-    # Primary expected file: /etc/network/interfaces.d/eth0
     eth0_cfg = desired_ifupdown_eth0_content()
     changed |= file_write_if_changed("/etc/network/interfaces.d/eth0", eth0_cfg)
-
-    # Remove other interfaces.d files that explicitly configure eth0:1
     d = Path("/etc/network/interfaces.d")
     if d.exists():
         for p in d.iterdir():
-            if not p.is_file():
-                continue
-            if p.name == "eth0":
+            if not p.is_file() or p.name == "eth0":
                 continue
             txt = p.read_text(errors="ignore")
             if "eth0:1" in txt or "iface eth0:1" in txt:
-                # Comment out the file rather than deleting to keep reversibility
                 backup = p.with_suffix(p.suffix + ".disabled")
                 if not backup.exists():
                     p.replace(backup)
                     changed = True
-
     return changed
 
 
 def remove_runtime_alias_addresses() -> bool:
-    """
-    Remove any eth0:1 label and any secondary IPv4 addresses on eth0.
-    If the desired IP is currently labeled as eth0:1, force a clean re-apply.
-    Returns True if any runtime changes were made.
-    """
     changed = False
-
     s = out(f"ip -4 addr show {IFACE}")
-
-    desired_cidr = f"{DESIRED_ADDRESS}/"
-    desired_present = desired_cidr in s
+    desired_present = f"{DESIRED_ADDRESS}/" in s
     desired_labeled_alias = (
         re.search(rf"inet\s+{re.escape(DESIRED_ADDRESS)}/\d+.*\beth0:1\b", s)
         is not None
     )
-
-    # If the desired IP is labeled eth0:1, remove it so it can come back as plain eth0
     if desired_present and desired_labeled_alias:
         sh(f"ip addr del {DESIRED_ADDRESS}/24 dev {IFACE} >/dev/null 2>&1 || true")
         changed = True
-
-    # Remove any other IPv4 addresses on eth0 except the desired one
     for line in s.splitlines():
         line = line.strip()
         if not line.startswith("inet "):
             continue
-        cidr = line.split()[1]  # e.g. 192.168.138.99/24
+        cidr = line.split()[1]
         if cidr.startswith(f"{DESIRED_ADDRESS}/"):
             continue
         sh(f"ip addr del {cidr} dev {IFACE} >/dev/null 2>&1 || true")
         changed = True
-
     return changed
 
 
 def get_udev_path_for_iface_sysfs(iface: str) -> str:
-    # Correct for net devices:
-    # udevadm info -q path -p /sys/class/net/eth0
     return out(f"udevadm info -q path -p /sys/class/net/{iface}")
-
-
-def desired_link_content_by_path(iface: str, desired_mac: str) -> str:
-    path = get_udev_path_for_iface_sysfs(iface)
-    return "\n".join(
-        [
-            "[Match]",
-            f"Path={path}",
-            "",
-            "[Link]",
-            f"MACAddress={desired_mac}",
-            "",
-        ]
-    )
-
-
-def desired_link_content_fallback(desired_mac: str) -> str:
-    # Fallback match (less strict): match original name + driver
-    # This is used only if we cannot resolve a Path from udevadm.
-    return "\n".join(
-        [
-            "[Match]",
-            "OriginalName=eth0",
-            "Driver=macb",
-            "",
-            "[Link]",
-            f"MACAddress={desired_mac}",
-            "",
-        ]
-    )
 
 
 def ensure_persistent_mac_link(iface: str, desired_mac: str) -> bool:
     try:
         path = get_udev_path_for_iface_sysfs(iface)
         if path:
-            content = desired_link_content_by_path(iface, desired_mac)
+            content = f"[Match]\nPath={path}\n\n[Link]\nMACAddress={desired_mac}\n"
         else:
-            content = desired_link_content_fallback(desired_mac)
+            content = f"[Match]\nOriginalName=eth0\nDriver=macb\n\n[Link]\nMACAddress={desired_mac}\n"
     except Exception:
-        content = desired_link_content_fallback(desired_mac)
-
+        content = f"[Match]\nOriginalName=eth0\nDriver=macb\n\n[Link]\nMACAddress={desired_mac}\n"
     return file_write_if_changed("/etc/systemd/network/10-eth0.link", content)
 
 
 def set_mac_runtime(iface: str, mac: str) -> bool:
-    before = get_current_mac(iface)
-    if before == mac.lower():
+    if get_current_mac(iface) == mac.lower():
         return False
-
     sh(f"ip link set dev {iface} down")
     sh(f"ip link set dev {iface} address {mac}")
     sh(f"ip link set dev {iface} up")
-
-    after = get_current_mac(iface)
-    return after == mac.lower()
+    return get_current_mac(iface) == mac.lower()
 
 
 def ensure_default_gateway():
-    current_gw = get_default_gateway()
-    if current_gw != DESIRED_GATEWAY:
+    if get_default_gateway() != DESIRED_GATEWAY:
         sh(f"ip route add default via {DESIRED_GATEWAY} || true")
-        return True
-    return False
 
 
 def ensure_systemd_resolved_dns() -> bool:
     if not DESIRED_DNS:
         return False
-
     dns_str = " ".join(DESIRED_DNS)
-    content = f"[Resolve]\nDNS={dns_str}\n"
-
-    # drop-in config
-    changed = file_write_if_changed(
-        "/etc/systemd/resolved.conf.d/10-pynq-dns.conf", content
+    return file_write_if_changed(
+        "/etc/systemd/resolved.conf.d/10-pynq-dns.conf", f"[Resolve]\nDNS={dns_str}\n"
     )
-    return changed
+
+
+def ensure_systemd_timesyncd_ntp() -> bool:
+    if not DESIRED_NTP_SERVER:
+        return False
+    return file_write_if_changed(
+        "/etc/systemd/timesyncd.conf.d/10-pynq-ntp.conf",
+        f"[Time]\nNTP={DESIRED_NTP_SERVER}\nFallbackNTP=ntp.ubuntu.com\n",
+    )
 
 
 def main() -> None:
-    # Must be root to write /etc and change link settings
     if os.geteuid() != 0:
         print("[boot.py] ERROR: must run as root")
         return
 
-    # Give early boot a moment
     time.sleep(2)
+    print("[boot.py] Starting (bulletproof init)")
 
-    print("[boot.py] Starting (idempotent, persistent)")
+    # 1. Write all configurations (Hostname, MAC, DNS, NTP, IP)
+    set_persistent_hostname(DESIRED_HOSTNAME)
+    if DESIRED_MAC:
+        ensure_persistent_mac_link(IFACE, DESIRED_MAC)
+    ensure_systemd_resolved_dns()
+    ensure_systemd_timesyncd_ntp()
 
-    avahi_restart_needed = False
-    networking_apply_needed = False
-    reboot_needed = False
-
-    # 1) Hostname (persistent + runtime)
-    if set_persistent_hostname(DESIRED_HOSTNAME):
-        avahi_restart_needed = True
-
-    # 2) IP config (persistent): rewrite eth0 config and remove eth0:1 permanently
     if REMOVE_ETH0_ALIAS:
-        if remove_eth0_alias_configs():
-            networking_apply_needed = True
+        remove_eth0_alias_configs()
     else:
-        # If not removing alias, still ensure eth0 base config is correct
-        cfg_changed = file_write_if_changed(
+        file_write_if_changed(
             "/etc/network/interfaces.d/eth0", desired_ifupdown_eth0_content()
         )
-        if cfg_changed:
-            networking_apply_needed = True
 
-    # 3) Apply IP if runtime is not already correct
+    # 2. Apply MAC address at runtime
+    if DESIRED_MAC and APPLY_MAC_RUNTIME_NOW:
+        set_mac_runtime(IFACE, DESIRED_MAC)
+
+    # 3. Bring up the network (NTP requires network access)
     current_addrs = get_current_ipv4_addrs(IFACE)
-    has_desired_ip = any(
-        cidr.startswith(f"{DESIRED_ADDRESS}/") for cidr in current_addrs
-    )
-
-    if not has_desired_ip:
-        networking_apply_needed = True
-
-    if networking_apply_needed:
+    if not any(cidr.startswith(f"{DESIRED_ADDRESS}/") for cidr in current_addrs):
         apply_ifupdown_runtime()
-        avahi_restart_needed = True
 
-    # 4) Runtime cleanup: remove any leftover secondary IPv4 on eth0 (eth0:1 remnants)
+    ensure_default_gateway()
     if REMOVE_ETH0_ALIAS:
-        if remove_runtime_alias_addresses():
-            avahi_restart_needed = True
+        remove_runtime_alias_addresses()
 
-    # 5) MAC (persistent via .link, optional runtime apply)
-    if DESIRED_MAC:
-        current_mac = get_current_mac(IFACE)
-        if current_mac != DESIRED_MAC.lower():
-            link_changed = ensure_persistent_mac_link(IFACE, DESIRED_MAC)
-            if APPLY_MAC_RUNTIME_NOW:
-                ok = set_mac_runtime(IFACE, DESIRED_MAC)
-                if not ok:
-                    reboot_needed = True
-            if link_changed and REBOOT_IF_LINK_CHANGED:
-                reboot_needed = True
+    # 4. Handle the "Time Jump Shock" using aggressive ntpdate
+    time_jump_occurred = False
+    current_year = datetime.datetime.now().year
+    print(f"[boot.py] Board time is in Year {current_year}.")
 
-    # 6) Ensure Gateway (MUST be after MAC changes)
-    gw_ok = get_default_gateway() == DESIRED_GATEWAY
-    if not gw_ok:
-        print(f"[boot.py] ensure default gateway {DESIRED_GATEWAY}")
+    if current_year < MIN_VALID_YEAR:
+        ntp_target = DESIRED_NTP_SERVER if DESIRED_NTP_SERVER else "ntp.aliyun.com"
+        print(f"[boot.py] Forcing aggressive sync via {ntp_target}...")
+
+        # Retry loop to account for switch/router port negotiation delays
+        for i in range(15):
+            # -b: Step time directly (huge jumps)
+            # -u: Unprivileged port (avoids conflict with systemd-timesyncd)
+            res = sh(f"ntpdate -b -u {ntp_target} >/dev/null 2>&1")
+
+            if res == 0:
+                print(f"[boot.py] Time jumped successfully to {datetime.datetime.now().year} via ntpdate!")
+                sh("hwclock -w >/dev/null 2>&1 || true")  # Attempt to save to RTC
+                time.sleep(2)  # Buffer for kernel timers to process the massive jump
+                time_jump_occurred = True
+                break
+
+            print(f"[boot.py] Network/NTP not ready yet, retrying... ({i+1}/15)")
+            time.sleep(1)
+        else:
+            print("[boot.py] Warning: Aggressive ntpdate sync timed out.")
+
+    # Restart timesyncd so it can handle the micro-adjustments smoothly from here on out
+    sh("systemctl restart systemd-timesyncd >/dev/null 2>&1 || true")
+
+    # 5. Network Recovery: Restore routing and ARP tables after the time jump
+    if time_jump_occurred:
+        print("[boot.py] Recovering network interfaces (IP/Routes) after massive time jump...")
+        # A 50-year jump causes kernel timers to expire. Restarting the interface clears stale states.
+        apply_ifupdown_runtime()
         ensure_default_gateway()
     else:
-        print(f"[boot.py] default gateway : {get_default_gateway()}")
+        ensure_default_gateway()
 
-    # 7) Ensure systemd-resolved DNS
-    if ensure_systemd_resolved_dns():
-        print("[boot.py] DNS configuration updated, restarting systemd-resolved")
-        sh("systemctl restart systemd-resolved || true")
+    # 6. Broadcast Gratuitous ARP: Force PC/Router to update MAC cache
+    print(f"[boot.py] Broadcasting GARP to update local network ARP caches for {DESIRED_ADDRESS}")
+    sh(f"arping -U -c 3 -I {IFACE} {DESIRED_ADDRESS} >/dev/null 2>&1 || true")
 
-    # 8) Ensure .local reflects current hostname and current IP set
-    if avahi_restart_needed:
-        restart_avahi()
+    # 7. Restart upper-layer services dependent on time
+    sh("systemctl restart systemd-resolved >/dev/null 2>&1 || true")
+    restart_avahi()
 
-    # 9) Show final state
+    # 8. Print final status
     sh(f"ip link show {IFACE}")
     sh(f"ip -4 addr show {IFACE}")
     sh("ip route show default || true")
-    sh("resolvectl status || true")
-    sh("hostname")
-    sh(
-        "systemctl --no-pager --full status avahi-daemon 2>/dev/null | head -n 25 || true"
-    )
+    sh("timedatectl status | grep 'System clock synchronized' || true")
 
-    if reboot_needed:
-        print("[boot.py] Rebooting to finalize changes")
-        sh("reboot")
+    print("[boot.py] Initialization Complete.")
 
 
 if __name__ == "__main__":

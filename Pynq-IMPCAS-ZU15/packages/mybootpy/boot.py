@@ -18,28 +18,40 @@ DESIRED_ADDRESS = "192.168.138.99"
 DESIRED_NETMASK = "255.255.255.0"
 DESIRED_GATEWAY = "192.168.138.1"
 DESIRED_DNS = ["192.168.138.1", "114.114.114.114"]
-DESIRED_NTP_SERVER = "192.168.138.254"
+
+# LIST of multiple NTP servers. Ordered by priority.
+DESIRED_NTP_SERVERS = [
+    "10.10.7.11",
+    "192.168.138.254",
+    "ntp.aliyun.com",
+    "ntp.tencent.com",
+    "pool.ntp.org",
+]
 
 REMOVE_ETH0_ALIAS = True
 APPLY_MAC_RUNTIME_NOW = True
 REBOOT_IF_LINK_CHANGED = False
 
 # Minimum acceptable year. If the system year is below this,
-# it assumes the RTC battery is dead/missing and forces an NTP jump.
+# the script assumes the RTC battery is dead/missing and will
+# force an NTP sync or inject a manual fallback time.
 MIN_VALID_YEAR = 2026
 # ==============================
 
 
 def sh(cmd: str) -> int:
+    """Executes a shell command and prints the command to stdout."""
     print(f"[boot.py] {cmd}")
     return subprocess.run(cmd, shell=True, check=False).returncode
 
 
 def out(cmd: str) -> str:
+    """Executes a shell command and returns its stdout as a string."""
     return subprocess.check_output(cmd, shell=True, text=True).strip()
 
 
 def file_write_if_changed(path: str, content: str, mode: int = 0o644) -> bool:
+    """Writes content to a file only if it differs from the current content."""
     p = Path(path)
     current = p.read_text() if p.exists() else ""
     if current == content:
@@ -78,6 +90,7 @@ def get_default_gateway() -> str:
 
 
 def apply_ifupdown_runtime() -> None:
+    """Restarts the network interface to flush stale kernel states."""
     sh(f"ifdown {IFACE} >/dev/null 2>&1 || true")
     sh(f"ifup {IFACE} >/dev/null 2>&1 || true")
 
@@ -204,11 +217,13 @@ def ensure_systemd_resolved_dns() -> bool:
 
 
 def ensure_systemd_timesyncd_ntp() -> bool:
-    if not DESIRED_NTP_SERVER:
+    if not DESIRED_NTP_SERVERS:
         return False
+    # systemd-timesyncd requires a space-separated list of servers
+    ntp_str = " ".join(DESIRED_NTP_SERVERS)
     return file_write_if_changed(
         "/etc/systemd/timesyncd.conf.d/10-pynq-ntp.conf",
-        f"[Time]\nNTP={DESIRED_NTP_SERVER}\nFallbackNTP=ntp.ubuntu.com\n",
+        f"[Time]\nNTP={ntp_str}\nFallbackNTP=ntp.ubuntu.com\n",
     )
 
 
@@ -218,9 +233,9 @@ def main() -> None:
         return
 
     time.sleep(2)
-    print("[boot.py] Starting (bulletproof init)")
+    print("[boot.py] Starting (bulletproof init sequence)")
 
-    # 1. Write all configurations (Hostname, MAC, DNS, NTP, IP)
+    # 1. Write all persistent configurations (Hostname, MAC, DNS, NTP, IP)
     set_persistent_hostname(DESIRED_HOSTNAME)
     if DESIRED_MAC:
         ensure_persistent_mac_link(IFACE, DESIRED_MAC)
@@ -238,7 +253,7 @@ def main() -> None:
     if DESIRED_MAC and APPLY_MAC_RUNTIME_NOW:
         set_mac_runtime(IFACE, DESIRED_MAC)
 
-    # 3. Bring up the network (NTP requires network access)
+    # 3. Bring up the network (NTP requires network access to function)
     current_addrs = get_current_ipv4_addrs(IFACE)
     if not any(cidr.startswith(f"{DESIRED_ADDRESS}/") for cidr in current_addrs):
         apply_ifupdown_runtime()
@@ -247,54 +262,137 @@ def main() -> None:
     if REMOVE_ETH0_ALIAS:
         remove_runtime_alias_addresses()
 
-    # 4. Handle the "Time Jump Shock" using aggressive ntpdate
+    # ================= PHYSICAL LINK BARRIER =================
+    # Block and wait until the gateway is reachable. This allows the
+    # external switch/router to complete its STP (Spanning Tree Protocol)
+    # listening/learning phase, which drops packets for ~15-30 seconds.
+    print(f"[boot.py] Waiting for gateway {DESIRED_GATEWAY} to become reachable...")
+    network_is_up = False
+    for i in range(30):
+        if sh(f"ping -c 1 -W 1 {DESIRED_GATEWAY} >/dev/null 2>&1") == 0:
+            print("[boot.py] Network link is UP and gateway is reachable!")
+            network_is_up = True
+            break
+        time.sleep(1)
+    else:
+        print(
+            "[boot.py] Warning: Gateway unreachable after 30s. Network might be physically down."
+        )
+
+    # 4. Handle the "Time Jump Shock" (Robust Check + Ultimate Fallback)
     time_jump_occurred = False
-    current_year = datetime.datetime.now().year
-    print(f"[boot.py] Board time is in Year {current_year}.")
+    initial_year = datetime.datetime.now().year
 
-    if current_year < MIN_VALID_YEAR:
-        ntp_target = DESIRED_NTP_SERVER if DESIRED_NTP_SERVER else "ntp.aliyun.com"
-        print(f"[boot.py] Forcing aggressive sync via {ntp_target}...")
+    if initial_year < MIN_VALID_YEAR:
+        print(
+            f"[boot.py] Board time is in the past (Year {initial_year}). Attempting to sync..."
+        )
 
-        # Retry loop to account for switch/router port negotiation delays
-        for i in range(15):
-            # -b: Step time directly (huge jumps)
-            # -u: Unprivileged port (avoids conflict with systemd-timesyncd)
-            res = sh(f"ntpdate -b -u {ntp_target} >/dev/null 2>&1")
+        if network_is_up:
+            # Dynamically build the target pool from the user settings list
+            ntp_targets = list(DESIRED_NTP_SERVERS)
 
-            if res == 0:
-                print(f"[boot.py] Time jumped successfully to {datetime.datetime.now().year} via ntpdate!")
-                sh("hwclock -w >/dev/null 2>&1 || true")  # Attempt to save to RTC
-                time.sleep(2)  # Buffer for kernel timers to process the massive jump
-                time_jump_occurred = True
-                break
+            # Always append a reliable global fallback just in case the entire custom list fails
+            if "ntp.ubuntu.com" not in ntp_targets:
+                ntp_targets.append("ntp.ubuntu.com")
 
-            print(f"[boot.py] Network/NTP not ready yet, retrying... ({i+1}/15)")
-            time.sleep(1)
+            sync_success = False
+
+            for target in ntp_targets:
+                if not target:
+                    continue
+                print(f"[boot.py] Trying ntpdate -b -u {target}...")
+
+                # Retry each server up to 3 times
+                for i in range(3):
+                    if sh(f"ntpdate -b -u {target} >/dev/null 2>&1") == 0:
+                        print(f"[boot.py] Time synced successfully via {target}!")
+                        sync_success = True
+                        break
+                    time.sleep(1)
+
+                if sync_success:
+                    break
+
+            # If aggressive ntpdate fails, give the background daemon a final 10 seconds
+            if not sync_success:
+                print(
+                    "[boot.py] Aggressive ntpdate failed. Delegating to systemd-timesyncd and waiting..."
+                )
+                sh("systemctl restart systemd-timesyncd >/dev/null 2>&1 || true")
+                for _ in range(10):
+                    if datetime.datetime.now().year >= MIN_VALID_YEAR:
+                        print("[boot.py] Time synced via background timesyncd!")
+                        break
+                    time.sleep(1)
+
+        # [ULTIMATE FALLBACK]: Check if the time was actually fixed
+        final_year = datetime.datetime.now().year
+        if final_year >= MIN_VALID_YEAR:
+            # Real NTP sync succeeded
+            sh("hwclock -w >/dev/null 2>&1 || true")
+            time.sleep(2)  # Buffer to let the kernel clear expired timers
+            time_jump_occurred = True
         else:
-            print("[boot.py] Warning: Aggressive ntpdate sync timed out.")
+            # ================= MANUAL FALLBACK INJECTION =================
+            # If all NTP servers fail (or no network cable is plugged in),
+            # we CANNOT leave the system in 1970. We force a manual jump to
+            # MIN_VALID_YEAR to safely trigger the disaster recovery logic below.
+            fallback_time = f"{MIN_VALID_YEAR}-01-01 12:00:00"
+            print(
+                f"[boot.py] CRITICAL: All NTP failed. Forcing manual fallback time to {fallback_time}"
+            )
 
-    # Restart timesyncd so it can handle the micro-adjustments smoothly from here on out
+            sh(f'date -s "{fallback_time}" >/dev/null 2>&1')
+            sh("hwclock -w >/dev/null 2>&1 || true")
+            time.sleep(2)
+
+            # Since we manually initiated a massive time jump, we must flag it!
+            time_jump_occurred = True
+            # =============================================================
+
+    # Always ensure timesyncd is running to handle future micro-adjustments smoothly
     sh("systemctl restart systemd-timesyncd >/dev/null 2>&1 || true")
 
     # 5. Network Recovery: Restore routing and ARP tables after the time jump
     if time_jump_occurred:
-        print("[boot.py] Recovering network interfaces (IP/Routes) after massive time jump...")
-        # A 50-year jump causes kernel timers to expire. Restarting the interface clears stale states.
+        print(
+            "[boot.py] Recovering network interfaces (IP/Routes) after massive time jump..."
+        )
+        # A massive time jump causes TCP/IP timers to expire instantly.
+        # Bouncing the interface clears all stale kernel states.
         apply_ifupdown_runtime()
+
+        # ================= STP RECOVERY BARRIER =================
+        # Bouncing the interface (ifdown/ifup) drops the physical link momentarily.
+        # The switch will restart its STP negotiation, dropping packets for another 15-30s.
+        # We must wait for the link to recover before broadcasting the GARP.
+        print(
+            f"[boot.py] Waiting for switch/gateway to recover from interface bounce..."
+        )
+        for i in range(30):
+            if sh(f"ping -c 1 -W 1 {DESIRED_GATEWAY} >/dev/null 2>&1") == 0:
+                print("[boot.py] Link is UP and gateway recovered!")
+                break
+            time.sleep(1)
+        # ========================================================
+
         ensure_default_gateway()
     else:
         ensure_default_gateway()
 
     # 6. Broadcast Gratuitous ARP: Force PC/Router to update MAC cache
-    print(f"[boot.py] Broadcasting GARP to update local network ARP caches for {DESIRED_ADDRESS}")
-    sh(f"arping -U -c 3 -I {IFACE} {DESIRED_ADDRESS} >/dev/null 2>&1 || true")
+    if network_is_up:
+        print(
+            f"[boot.py] Broadcasting GARP to update local network ARP caches for {DESIRED_ADDRESS}"
+        )
+        sh(f"arping -U -c 3 -I {IFACE} {DESIRED_ADDRESS} >/dev/null 2>&1 || true")
 
     # 7. Restart upper-layer services dependent on time
     sh("systemctl restart systemd-resolved >/dev/null 2>&1 || true")
     restart_avahi()
 
-    # 8. Print final status
+    # 8. Print final initialization status
     sh(f"ip link show {IFACE}")
     sh(f"ip -4 addr show {IFACE}")
     sh("ip route show default || true")

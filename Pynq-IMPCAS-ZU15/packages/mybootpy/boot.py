@@ -19,7 +19,7 @@ DESIRED_NETMASK = "255.255.255.0"
 DESIRED_GATEWAY = "192.168.138.1"
 DESIRED_DNS = ["192.168.138.1", "114.114.114.114"]
 
-# LIST of multiple NTP servers. Ordered by priority.
+# List of multiple NTP servers. Ordered by priority.
 DESIRED_NTP_SERVERS = [
     "10.10.7.11",
     "192.168.138.254",
@@ -263,20 +263,20 @@ def main() -> None:
         remove_runtime_alias_addresses()
 
     # ================= PHYSICAL LINK BARRIER =================
-    # Block and wait until the gateway is reachable. This allows the
-    # external switch/router to complete its STP (Spanning Tree Protocol)
-    # listening/learning phase, which drops packets for ~15-30 seconds.
+    # Block and wait until the gateway is reachable. Reduced to 15s to
+    # prevent massive boot delays if the board is directly connected to a PC
+    # (which blocks pings) or if the gateway is genuinely offline.
     print(f"[boot.py] Waiting for gateway {DESIRED_GATEWAY} to become reachable...")
-    network_is_up = False
-    for i in range(30):
+    gateway_reachable = False
+    for i in range(15):
         if sh(f"ping -c 1 -W 1 {DESIRED_GATEWAY} >/dev/null 2>&1") == 0:
-            print("[boot.py] Network link is UP and gateway is reachable!")
-            network_is_up = True
+            print("[boot.py] Gateway is reachable!")
+            gateway_reachable = True
             break
         time.sleep(1)
     else:
         print(
-            "[boot.py] Warning: Gateway unreachable after 30s. Network might be physically down."
+            "[boot.py] Warning: Gateway unreachable. (Dead, unplugged, or firewall blocking ping)."
         )
 
     # 4. Handle the "Time Jump Shock" (Robust Check + Ultimate Fallback)
@@ -288,7 +288,7 @@ def main() -> None:
             f"[boot.py] Board time is in the past (Year {initial_year}). Attempting to sync..."
         )
 
-        if network_is_up:
+        if gateway_reachable:
             # Dynamically build the target pool from the user settings list
             ntp_targets = list(DESIRED_NTP_SERVERS)
 
@@ -335,12 +335,12 @@ def main() -> None:
             time_jump_occurred = True
         else:
             # ================= MANUAL FALLBACK INJECTION =================
-            # If all NTP servers fail (or no network cable is plugged in),
-            # we CANNOT leave the system in 1970. We force a manual jump to
-            # MIN_VALID_YEAR to safely trigger the disaster recovery logic below.
+            # If all NTP servers fail (or gateway is offline), we CANNOT leave
+            # the system in 1970. We force a manual jump to MIN_VALID_YEAR to
+            # safely trigger the disaster recovery logic below.
             fallback_time = f"{MIN_VALID_YEAR}-01-01 12:00:00"
             print(
-                f"[boot.py] CRITICAL: All NTP failed. Forcing manual fallback time to {fallback_time}"
+                f"[boot.py] CRITICAL: Time sync impossible. Forcing manual fallback time to {fallback_time}"
             )
 
             sh(f'date -s "{fallback_time}" >/dev/null 2>&1')
@@ -364,29 +364,37 @@ def main() -> None:
         apply_ifupdown_runtime()
 
         # ================= STP RECOVERY BARRIER =================
-        # Bouncing the interface (ifdown/ifup) drops the physical link momentarily.
-        # The switch will restart its STP negotiation, dropping packets for another 15-30s.
-        # We must wait for the link to recover before broadcasting the GARP.
-        print(
-            f"[boot.py] Waiting for switch/gateway to recover from interface bounce..."
-        )
-        for i in range(30):
-            if sh(f"ping -c 1 -W 1 {DESIRED_GATEWAY} >/dev/null 2>&1") == 0:
-                print("[boot.py] Link is UP and gateway recovered!")
-                break
-            time.sleep(1)
+        if gateway_reachable:
+            # If the gateway was reachable earlier, bouncing the interface will restart
+            # the switch's STP negotiation. We MUST wait for the port to forward again.
+            print(
+                f"[boot.py] Waiting for switch/gateway to recover from interface bounce..."
+            )
+            for i in range(15):
+                if sh(f"ping -c 1 -W 1 {DESIRED_GATEWAY} >/dev/null 2>&1") == 0:
+                    print("[boot.py] Link is UP and gateway recovered!")
+                    break
+                time.sleep(1)
+        else:
+            # If the gateway was already dead or blocking pings, don't waste 15s waiting for it.
+            # Just give the network interface 5 seconds to physically settle.
+            print(
+                "[boot.py] Gateway was previously unreachable. Waiting 5s for interface to settle..."
+            )
+            time.sleep(5)
         # ========================================================
 
         ensure_default_gateway()
     else:
         ensure_default_gateway()
 
-    # 6. Broadcast Gratuitous ARP: Force PC/Router to update MAC cache
-    if network_is_up:
-        print(
-            f"[boot.py] Broadcasting GARP to update local network ARP caches for {DESIRED_ADDRESS}"
-        )
-        sh(f"arping -U -c 3 -I {IFACE} {DESIRED_ADDRESS} >/dev/null 2>&1 || true")
+    # 6. Broadcast Gratuitous ARP (UNCONDITIONAL)
+    # Even if the gateway is completely dead (e.g., direct PC connection),
+    # we MUST scream our MAC address to the wire so the connected peer learns it.
+    print(
+        f"[boot.py] Broadcasting GARP to update local network ARP caches for {DESIRED_ADDRESS}"
+    )
+    sh(f"arping -U -c 3 -I {IFACE} {DESIRED_ADDRESS} >/dev/null 2>&1 || true")
 
     # 7. Restart upper-layer services dependent on time
     sh("systemctl restart systemd-resolved >/dev/null 2>&1 || true")

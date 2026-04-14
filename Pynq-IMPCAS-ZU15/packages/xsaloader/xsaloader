@@ -1,0 +1,169 @@
+#!/usr/local/share/pynq-venv/bin/python
+
+import argparse
+import os
+import sys
+import asyncio
+import time
+from flask import Flask, render_template_string, request, Response, stream_with_context
+from pynq import Overlay, Device, Clocks
+
+
+# --- STREAMING LOGIC ---
+def run_load_logic_stream(xsa_path):
+    """Generator that prints to terminal and yields lines to the web UI."""
+    try:
+
+        def log(msg):
+            # Print to the physical terminal (SSH)
+            sys.__stdout__.write(msg + "\n")
+            sys.__stdout__.flush()
+            # Yield to the HTTP stream
+            return msg + "\n"
+
+        yield log(f"[*] Initiating FPGA Programming: {os.path.basename(xsa_path)}")
+
+        # Reset active overlay to clean up AXI maps
+        Device.active_overlay = None
+
+        # Load the XSA
+        ol = Overlay(xsa_path, ignore_version=True)
+
+        yield log("\n" + "=" * 60 + "\nSYSTEM & HARDWARE OVERVIEW\n" + "=" * 60)
+        dev_name = Device.devices[0].name if Device.devices else "Unknown"
+        yield log(f"{'Target Device:':<25} {dev_name}")
+        yield log(f"{'Load Status:':<25} {'SUCCESS' if ol.is_loaded() else 'FAILED'}")
+
+        # --- FIXED CLOCK SECTION ---
+        yield log("\n" + "=" * 60 + "\nCLOCK CONFIGURATION\n" + "=" * 60)
+        # Directly accessing attributes as they are more reliable
+        yield log(f"{'CPU:':<20} {Clocks.cpu_mhz:>15.6f} MHz")
+        yield log(f"{'FCLK0:':<20} {Clocks.fclk0_mhz:>15.6f} MHz")
+        yield log(f"{'FCLK1:':<20} {Clocks.fclk1_mhz:>15.6f} MHz")
+        yield log(f"{'FCLK2:':<20} {Clocks.fclk2_mhz:>15.6f} MHz")
+        yield log(f"{'FCLK3:':<20} {Clocks.fclk3_mhz:>15.6f} MHz")
+
+        yield log("\n" + "=" * 60 + "\nIP BLOCKS (MEMORY MAP)\n" + "=" * 60)
+        if not ol.ip_dict:
+            yield log(" No memory-mapped IP blocks detected.")
+        else:
+            for ip, details in ol.ip_dict.items():
+                addr = details.get("phys_addr")
+                if addr is not None:
+                    yield log(f"{ip:<30} {hex(addr):<15}")
+
+        yield log("\n" + "=" * 60 + "\nPROGRAMMING COMPLETE\n" + "=" * 60)
+
+    except Exception as e:
+        yield log(f"\n[!] CRITICAL ERROR: {str(e)}")
+
+
+# --- WEB SERVER ---
+def run_server(port):
+    app = Flask(__name__)
+    UPLOAD_FOLDER = "/tmp/xsa_uploads"
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+    HTML = """
+    <!doctype html>
+    <html>
+    <head>
+        <title>IMPCAS PYNQ XSA Loader</title>
+        <style>
+            body { font-family: 'Courier New', monospace; background: #121212; color: #00ff00; padding: 20px; }
+            .box { background: #1e1e1e; padding: 20px; border: 2px solid #333; border-radius: 8px; }
+            pre { background: #000; padding: 15px; border: 1px solid #00ff0033; color: #00ff00; 
+                  white-space: pre-wrap; height: 500px; overflow-y: auto; }
+            .btn { background: #d32f2f; color: white; border: none; padding: 12px 24px; 
+                  cursor: pointer; font-weight: bold; border-radius: 4px; }
+            h2 { color: #fff; margin-top: 0; }
+        </style>
+    </head>
+    <body>
+        <div class="box">
+            <h2>IMPCAS PYNQ XSA Loader</h2>
+            <form id="uploadForm">
+                <input type="file" id="xsa_file" style="color:white;"> <br><br>
+                <button type="button" class="btn" onclick="startStreamLoad()">UPLOAD & PROGRAM FPGA</button>
+            </form>
+            <hr style="border:1px solid #333;">
+            <h3>Live Console Output:</h3>
+            <pre id="output"></pre>
+        </div>
+
+        <script>
+            async function startStreamLoad() {
+                const fileInput = document.getElementById('xsa_file');
+                const output = document.getElementById('output');
+
+                if (!fileInput.files[0]) {
+                    alert("Select an XSA file first.");
+                    return;
+                }
+
+                if (!confirm("WARNING: Programming FPGA. Ensure NO other programs are accessing AXI. Proceed?")) return;
+
+                output.textContent = "[*] Connection established. Uploading file...\\n";
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+
+                try {
+                    const response = await fetch('/load', { method: 'POST', body: formData });
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        output.textContent += decoder.decode(value);
+                        output.scrollTop = output.scrollHeight; // Auto-scroll
+                    }
+                } catch (e) {
+                    output.textContent += "\\n[!] Stream Error: " + e;
+                }
+            }
+        </script>
+    </body>
+    </html>
+    """
+
+    @app.route("/")
+    def index():
+        return render_template_string(HTML)
+
+    @app.route("/load", methods=["POST"])
+    def load_endpoint():
+        # Set asyncio loop for the XRT driver in this thread
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        file = request.files.get("file")
+        if file and file.filename.endswith(".xsa"):
+            path = os.path.join(UPLOAD_FOLDER, file.filename)
+            file.save(path)
+            # Returns a streaming response
+            return Response(
+                stream_with_context(run_load_logic_stream(path)), mimetype="text/plain"
+            )
+        return "Invalid File", 400
+
+    app.run(host="0.0.0.0", port=port, threaded=True)
+
+
+# --- CLI HANDLER ---
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("xsa", nargs="?")
+    parser.add_argument("--server", action="store_true")
+    args = parser.parse_args()
+
+    if args.server:
+        run_server(5001)
+    elif args.xsa:
+        # For CLI, the generator inside run_load_logic_stream handles sys.__stdout__
+        for _ in run_load_logic_stream(os.path.abspath(args.xsa)):
+            pass
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

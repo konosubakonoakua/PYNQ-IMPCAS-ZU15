@@ -32,7 +32,7 @@ apt_install \
 	u-boot-tools tio net-tools minicom libtool re2c swig npm \
 	cmake autoconf automake gdb-multiarch gdbserver valgrind meson ninja-build \
 	git-lfs screen tmux procserv xterm gawk xz-utils util-linux \
-	i2c-tools spi-tools coreutils device-tree-compiler elfutils
+	i2c-tools spi-tools coreutils device-tree-compiler elfutils busybox
 
 apt_install bc bison flex pkg-config libssl-dev libelf-dev libncurses-dev \
 	libfdt-dev libnet-dev libpcap-dev libusb-1.0-0-dev python3-dev \

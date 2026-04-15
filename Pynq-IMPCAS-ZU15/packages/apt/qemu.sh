@@ -36,7 +36,7 @@ apt_install \
 
 apt_install bc bison flex pkg-config libssl-dev libelf-dev libncurses-dev \
 	libfdt-dev libnet-dev libpcap-dev libusb-1.0-0-dev python3-dev \
-	libz-dev libbpf-dev
+	libz-dev libbpf-dev gpiod libgpiod-dev
 
 apt_install libboost-all-dev libzmq3-dev libczmq-dev libzmq5
 

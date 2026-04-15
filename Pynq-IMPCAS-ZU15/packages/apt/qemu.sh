@@ -17,12 +17,14 @@ source "$LIB"
 
 log "[apt] start"
 
-tee /etc/apt/sources.list.d/multistrap-jammy.list > /dev/null <<'EOF'
-deb https://mirrors.lzu.edu.cn/ubuntu-ports/ jammy main restricted universe multiverse
-deb https://mirrors.lzu.edu.cn/ubuntu-ports/ jammy-updates main restricted universe multiverse
-deb https://mirrors.lzu.edu.cn/ubuntu-ports/ jammy-backports main restricted universe multiverse
-deb http://ports.ubuntu.com/ubuntu-ports/ jammy-security main restricted universe multiverse
-EOF
+# BUG: Redirection from https to 'http://mirrors.ustc.edu.cn/ubuntu-ports/dists/jammy/main/binary-arm64/Packages.xz' is forbidden [IP: 192.168.138.254 7897]
+#
+# tee /etc/apt/sources.list.d/multistrap-jammy.list > /dev/null <<'EOF'
+# deb https://mirrors.lzu.edu.cn/ubuntu-ports/ jammy main restricted universe multiverse
+# deb https://mirrors.lzu.edu.cn/ubuntu-ports/ jammy-updates main restricted universe multiverse
+# deb https://mirrors.lzu.edu.cn/ubuntu-ports/ jammy-backports main restricted universe multiverse
+# deb http://ports.ubuntu.com/ubuntu-ports/ jammy-security main restricted universe multiverse
+# EOF
 
 apt_update
 

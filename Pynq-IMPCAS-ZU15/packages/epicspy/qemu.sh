@@ -25,6 +25,7 @@ python3 -m pip install caproto
 python3 -m pip install grpcio==1.64.0 grpcio-tools==1.64.0
 python3 -m pip install epicsdbbuilder==1.5
 python3 -m pip install epicscorelibs==7.0.10.99.0.0
+python3 -m pip install pvxslibs==1.5.1 --no-deps
 python3 -m pip install pyepics==3.5.2 --no-deps
 python3 -m pip install cothread==2.18.3 --no-deps
 python3 -m pip install softioc==4.6.1 --no-deps

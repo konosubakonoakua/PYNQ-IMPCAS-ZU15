@@ -51,7 +51,7 @@ class AxiTimer(pynq.DefaultIP):
 
 
 class BaseOverlay(pynq.Overlay):
-    """Custom base overlay integrating hierarchy logic and custom drivers."""
+    """Custom base overlay integrating hierarchy logic and custom drivers for IMPCAS Beam Loss Monitor (ZU15)."""
 
     def __init__(self, bitfile, **kwargs):
         super().__init__(bitfile, **kwargs)
@@ -161,10 +161,16 @@ class BaseOverlay(pynq.Overlay):
             raise RuntimeError("GPIO Interrupt Trigger not available.")
 
     async def wait_gpio_interrupt(self):
-        intr_pin = self.interrupt_pins.get("intc_top/intr_concat/In0")
-        if not intr_pin:
+        intr_pin_dict = self.interrupt_pins.get("intc_top/intr_concat/In0")
+
+        if not intr_pin_dict:
             raise RuntimeError("Interrupt pin 'intc_top/intr_concat/In0' not found.")
-        await intr_pin.wait()
+
+        from pynq import Interrupt
+
+        intr = Interrupt(intr_pin_dict["fullpath"])
+
+        await intr.wait()
 
     async def dma_transfer_async(self, input_buffer, output_buffer):
         if not hasattr(self, "dma"):
@@ -190,7 +196,7 @@ class BaseOverlay(pynq.Overlay):
         except Exception as e:
             print(f"Could not read meminfo: {e}")
 
-    def check_interrupts(self, filter_keyword="uio"):
+    def check_interrupts(self, filter_keyword="fabric"):
         print(f"=== Interrupt Status (Filter: '{filter_keyword}') ===")
         try:
             with open("/proc/interrupts", "r") as f:

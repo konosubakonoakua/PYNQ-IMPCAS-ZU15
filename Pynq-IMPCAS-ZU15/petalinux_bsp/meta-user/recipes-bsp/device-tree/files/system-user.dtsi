@@ -1,12 +1,12 @@
 /include/ "system-conf.dtsi"
+
 / {
+    chosen {
+        bootargs = "earlycon console=ttyPS0,115200 root=/dev/mmcblk0p2 rw rootwait clk_ignore_unused uio_pdrv_genirq.of_id=\"generic-uio\" cma=4096M";
+        stdout-path = "serial0:115200n8";
+    };
 
-	chosen {
-		bootargs = "earlycon console=ttyPS0,115200 root=/dev/mmcblk0p2 ro rootwait clk_ignore_unused uio_pdrv_genirq.of_id=generic-uio";
-		stdout-path = "serial0:115200n8";
-	};
-
-    // BUG: https://adaptivesupport.amd.com/s/article/000036858?language=en_US
+    /* Workaround for AMD/Xilinx fclk management bug */
     fclk0: fclk0 {
         status = "okay";
         compatible = "xlnx,fclk";
@@ -32,10 +32,33 @@
         clocks = <&zynqmp_clk PL3_REF>;
     };
 
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+
+        linux,cma {
+            compatible = "shared-dma-pool";
+            reusable;
+
+            /* 1. Set Size to 4GB (0x1_0000_0000) */
+            size = <0x00000001 0x00000000>;
+
+            /* 2. Increased the window length to 8GB (0x2_0000_0000)
+               to accommodate the 4GB allocation request.
+               The search range is now from 8GB to 16GB physical address. */
+            alloc-ranges = <0x00000008 0x00000000 0x00000002 0x00000000>;
+
+            /* 3. Alignment for large contiguous blocks */
+            alignment = <0x00000000 0x01000000>;
+
+            linux,cma-default;
+        };
+    };
 };
 
 &sdhci1 {
-    no-1-8-v; // 1.8V to 3.3V level shifter (i.e. using LVCMOS18, but sd connector is driven by 3.3V)
+    no-1-8-v; /* Standard fix for ZU9/ZU15 level shifters */
     disable-wp;
     disable-cd;
 };
@@ -49,6 +72,4 @@
         ti,fifo-depth = <0x1>;
         ti,dp83867-rxctrl-strap-quirk;
     };
-    /* Cleanup from RevA */
-    // /delete-node/ phy@21;
 };

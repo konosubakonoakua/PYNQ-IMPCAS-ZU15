@@ -12,4 +12,4 @@ STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += apt
 STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += zig rust nodejs
 STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += vcpkg pwndbg utils
 STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += ethernet password timezone
-STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += hostname mybootpy sdcardshrink cleanup
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += hostname mybootpy uenv sdcardshrink cleanup

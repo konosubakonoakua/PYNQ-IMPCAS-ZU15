@@ -2,7 +2,7 @@
 
 / {
     chosen {
-        bootargs = "earlycon console=ttyPS0,115200 root=/dev/mmcblk0p2 rw rootwait clk_ignore_unused uio_pdrv_genirq.of_id=\"generic-uio\" cma=4096M";
+        bootargs = "earlycon console=ttyPS0,115200 root=/dev/mmcblk0p2 rw rootwait clk_ignore_unused uio_pdrv_genirq.of_id=\"generic-uio\"";
         stdout-path = "serial0:115200n8";
     };
 
@@ -32,27 +32,33 @@
         clocks = <&zynqmp_clk PL3_REF>;
     };
 
+    /* Dual Memory Pools in the reserved-memory node */
     reserved-memory {
         #address-cells = <2>;
         #size-cells = <2>;
         ranges;
 
-        linux,cma {
+        /* * Default System CMA (Low 256MB)
+         * This provides a safe 32-bit addressable memory space for legacy
+         * IP cores and the FPGA Manager (PCAP), resolving Errno 12.
+         */
+        sys_cma: linux,cma {
             compatible = "shared-dma-pool";
             reusable;
-
-            /* 1. Set Size to 4GB (0x1_0000_0000) */
-            size = <0x00000001 0x00000000>;
-
-            /* 2. Increased the window length to 8GB (0x2_0000_0000)
-               to accommodate the 4GB allocation request.
-               The search range is now from 8GB to 16GB physical address. */
-            alloc-ranges = <0x00000008 0x00000000 0x00000002 0x00000000>;
-
-            /* 3. Alignment for large contiguous blocks */
-            alignment = <0x00000000 0x01000000>;
-
+            size = <0x0 0x10000000>; /* 256MB */
+            alloc-ranges = <0x0 0x20000000 0x0 0x60000000>;
             linux,cma-default;
+        };
+
+        /* * Dedicated High-Speed Buffer CMA (High 4GB)
+         * Stripped of the "linux,cma-default" tag. This pool will sit idly
+         * at the 36GB offset until explicitly requested by the ZOCL driver.
+         */
+        pynq_cma_pool: pynq_cma_pool {
+            compatible = "shared-dma-pool";
+            reusable;
+            size = <0x00000001 0x00000000>; /* 4GB */
+            alloc-ranges = <0x00000008 0x00000000 0x00000002 0x00000000>;
         };
     };
 };
@@ -73,3 +79,27 @@
         ti,dp83867-rxctrl-strap-quirk;
     };
 };
+
+
+/* --- Enable 40-bit DMA for AXI Bus --- */
+&amba {
+    #address-cells = <2>;
+    #size-cells = <2>;
+    /* dma-ranges: <child-bus-addr parent-bus-addr size>
+       This allows the bus to access up to 64GB (0x10_0000_0000) of address space */
+    dma-ranges = <0x0 0x0 0x0 0x0 0x10 0x00000000>;
+
+    /* * Safely append properties to the ALREADY DEFINED ZOCL node.
+    * This overrides or adds to the existing node without causing duplication.
+    */
+    zyxclmm_drm {
+        /* https://adaptivesupport.amd.com/s/article/69446?language=en_US */
+        // dma-coherent;
+
+        /* * THE CORE STRATEGY:
+        * Explicitly bind the ZOCL driver to the 4GB High DDR memory pool.
+        */
+        memory-region = <&pynq_cma_pool>;
+    };
+};
+

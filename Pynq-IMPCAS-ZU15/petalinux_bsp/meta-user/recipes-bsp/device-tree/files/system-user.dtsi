@@ -61,6 +61,22 @@
             alloc-ranges = <0x00000008 0x00000000 0x00000002 0x00000000>;
         };
     };
+
+    udmabuf0: udmabuf0 {
+        compatible = "ikwzm,u-dma-buf";
+
+        /* This property determines the name in /dev/ */
+        device-name = "udmabuf0";
+
+        /* 4GB size expressed as two 32-bit cells */
+        size = <0x00000001 0x00000000>;
+
+        /* Required to support physical addresses above 4GB */
+        dma-mask = <40>;
+
+        memory-region = <&pynq_cma_pool>;
+        dma-coherent;
+    };
 };
 
 &sdhci1 {
@@ -94,12 +110,8 @@
     */
     zyxclmm_drm {
         /* https://adaptivesupport.amd.com/s/article/69446?language=en_US */
-        // dma-coherent;
-
-        /* * THE CORE STRATEGY:
-        * Explicitly bind the ZOCL driver to the 4GB High DDR memory pool.
-        */
-        memory-region = <&pynq_cma_pool>;
+        /* dma-coherent; */
+        memory-region = <&sys_cma>;
     };
 };
 

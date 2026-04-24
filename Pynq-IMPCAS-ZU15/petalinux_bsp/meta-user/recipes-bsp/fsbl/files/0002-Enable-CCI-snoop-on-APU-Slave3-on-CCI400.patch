@@ -1,0 +1,47 @@
+From bd53cd576cbc04e3f48a7e504773cb3e202fad97 Mon Sep 17 00:00:00 2001
+From: "rafael.ren" <rafael.ren@foxmail.com>
+Date: Sat, 25 Apr 2026 15:47:04 +0800
+Subject: [PATCH 2/3] Enable-CCI-snoop-on-APU-Slave3-on-CCI400
+
+---
+ lib/sw_apps/zynqmp_fsbl/src/xfsbl_hooks.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/lib/sw_apps/zynqmp_fsbl/src/xfsbl_hooks.c b/lib/sw_apps/zynqmp_fsbl/src/xfsbl_hooks.c
+index 7e35e114fc..54d3db67ac 100644
+--- a/lib/sw_apps/zynqmp_fsbl/src/xfsbl_hooks.c
++++ b/lib/sw_apps/zynqmp_fsbl/src/xfsbl_hooks.c
+@@ -128,6 +128,21 @@ static void cci_gpv_dump(void) {
+ }
+ 
+ 
++static void cci_enable_apu_snoop(void) {
++	const uint64_t OFFS_CCI_SNOOP_CTRL_REG_S3 = 0x00004000;
++
++	const uint32_t CCI_SNOOP_CONTROL_EN_SNOOP_MASK = 0x1;
++
++	uint32_t snoop_ctrl = XFsbl_In32(XPAR_PSU_CCI_GPV_S_AXI_BASEADDR + OFFS_CCI_SNOOP_CTRL_REG_S3);
++	XFsbl_Printf(DEBUG_PRINT_ALWAYS, "CCI: enable snoop, ctrl before = %x\r\n", snoop_ctrl);
++
++	XFsbl_Out32(XPAR_PSU_CCI_GPV_S_AXI_BASEADDR + OFFS_CCI_SNOOP_CTRL_REG_S3, CCI_SNOOP_CONTROL_EN_SNOOP_MASK);
++
++	snoop_ctrl = XFsbl_In32(XPAR_PSU_CCI_GPV_S_AXI_BASEADDR + OFFS_CCI_SNOOP_CTRL_REG_S3);
++	XFsbl_Printf(DEBUG_PRINT_ALWAYS, "CCI: enable snoop, ctrl after = %x\r\n", snoop_ctrl);
++}
++
++
+ u32 XFsbl_HookBeforeHandoff(u32 EarlyHandoff)
+ {
+ 	u32 Status = XFSBL_SUCCESS;
+@@ -138,6 +153,8 @@ u32 XFsbl_HookBeforeHandoff(u32 EarlyHandoff)
+ 	cci_reg_debug_enable();
+ 	cci_reg_dump();
+ 
++	cci_gpv_dump();
++	cci_enable_apu_snoop();
+ 	cci_gpv_dump();
+ 
+ 	return Status;
+-- 
+2.34.1
+

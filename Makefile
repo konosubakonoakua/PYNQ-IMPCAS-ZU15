@@ -60,17 +60,14 @@ endif
 
 ##@ Build Targets
 
-.PHONY: all
 all: gitsubmodule base image ## Build complete project (default: all)
 	@echo "$(GREEN)Build completed for ${BOARD_NAME}$(RESET)"
 
-.PHONY: image
 image: base gitsubmodule ${PREBUILT_SDIST} ${PREBUILT_IMAGE} ## Build SD card image
 	cd ${ROOT_PATH}/pynq/sdbuild/ && \
 	PYNQ_PROXY_URL="$(PYNQ_PROXY_URL)" \
 	make BOARDDIR=${ROOT_PATH}/ BOARDS=${BOARD_NAME} PYNQ_PSWD=${PYNQ_PSWD}
 
-.PHONY: boot_files
 boot_files: base gitsubmodule ${PREBUILT_SDIST} ${PREBUILT_IMAGE} ## Generate only boot files (BOOT.BIN, image.ub)
 	cd ${ROOT_PATH}/pynq/sdbuild/ && \
 	PYNQ_PROXY_URL="$(PYNQ_PROXY_URL)" \
@@ -86,16 +83,17 @@ sysroot: gitsubmodule ${PREBUILT_SDIST} ${PREBUILT_IMAGE} ## Generate SDK sysroo
 	PYNQ_PROXY_URL="$(PYNQ_PROXY_URL)" \
 	make sysroot BOARDDIR=${ROOT_PATH}/ BOARDS=${BOARD_NAME} PYNQ_PSWD=${PYNQ_PSWD}
 
-.PHONY: clean
 clean: unsetgitproxy ## Remove all build artifacts
 	cd ${ROOT_PATH}/pynq/sdbuild/ && make clean
 	@echo "$(GREEN)All build artifacts cleaned$(RESET)"
 
-.PHONY: base
+clean_bsp: unsetgitproxy ## Remove bsp artifacts
+	cd ${ROOT_PATH}/pynq/sdbuild/build/ && rm -rf $(BOARD_NAME)
+	@echo "$(GREEN)BSP artifacts cleaned$(RESET)"
+
 base: ${BOARD_FILES} base_overlay ## Verify and build base hardware design
 	@echo "$(GREEN)XSA file verification passed for ${BOARD_NAME}$(RESET)"
 
-.PHONY: base_overlay
 base_overlay: check-xsa ## Build overlay artifacts (bit/hwh) from XSA
 	@if [ ! -f "$(BASE_OVERLAY_MAKE)" ]; then \
 		echo "$(RED)Error: Overlay Makefile not found: $(BASE_OVERLAY_MAKE)$(RESET)"; \
@@ -105,7 +103,6 @@ base_overlay: check-xsa ## Build overlay artifacts (bit/hwh) from XSA
 	$(MAKE) -C $(BASE_OVERLAY_DIR) clean all
 	@echo "$(GREEN)Overlay build done: $$(ls -1 $(BASE_OVERLAY_DIR)/*.bit 2>/dev/null || true)$(RESET)"
 
-.PHONY: check-xsa
 check-xsa: ## Verify XSA file existence
 	@if [ ! -f "$(BASE_XSA_FILE)" ]; then \
 		echo "$(RED)Error: XSA file does not exist: $(BASE_XSA_FILE)$(RESET)"; \
@@ -119,10 +116,8 @@ check-xsa: ## Verify XSA file existence
 
 ##@ SD Card Operations
 
-.PHONY: sdcard
 sdcard: sdcard-confirm ## Burn image to SD card with safety confirmation (default: /dev/sdb)
 
-.PHONY: sdcard-confirm
 sdcard-confirm: check-image check-sdcard ## Burn image to SD card with interactive confirmation
 	@echo "$(RED)===============================================$(RESET)"
 	@echo "$(RED)          ⚠️  DANGEROUS OPERATION ⚠️          $(RESET)"
@@ -152,7 +147,6 @@ sdcard-confirm: check-image check-sdcard ## Burn image to SD card with interacti
 		echo "$(GREEN)Operation aborted. Device path mismatch.$(RESET)"; \
 	fi
 
-.PHONY: sdcard-burn
 sdcard-burn: ## Actually burn image to SD card (internal use only)
 	$(eval ACTUAL_IMAGE := $(lastword $(sort $(wildcard $(IMAGE_FILE)))))
 	@if [ -z "$(ACTUAL_IMAGE)" ]; then \
@@ -182,12 +176,10 @@ sdcard-burn: ## Actually burn image to SD card (internal use only)
 		echo "$(BLUE)Remember to eject the device before physical removal.$(RESET)"; \
 	fi
 
-.PHONY: sdcard-list
 sdcard-list: ## List available block devices for SD card selection
 	@echo "$(BLUE)Available block devices:$(RESET)"
 	@which lsblk >/dev/null 2>&1 && lsblk || (echo "Using fdisk:" && sudo fdisk -l)
 
-.PHONY: sdcard-format
 sdcard-format: ## Format SD card with FAT32 filesystem
 	@echo "$(YELLOW)Formatting $(SDCARD_DEVICE) as FAT32$(RESET)"
 	@echo "$(YELLOW)WARNING: This will erase all data on $(SDCARD_DEVICE)$(RESET)"
@@ -197,10 +189,8 @@ sdcard-format: ## Format SD card with FAT32 filesystem
 	sudo mkfs.vfat -F 32 -n BOOT $(SDCARD_DEVICE)1
 	@echo "$(GREEN)SD card formatting completed!$(RESET)"
 
-.PHONY: sdcard-safe
 sdcard-safe: check-sdcard sdcard-confirm ## Safe SD card burn with double confirmation
 
-.PHONY: check-sdcard
 check-sdcard: ## Check if SD card is properly detected
 	@if [ ! -b "$(SDCARD_DEVICE)" ]; then \
 		echo "$(RED)Error: SD card device $(SDCARD_DEVICE) not found$(RESET)"; \
@@ -211,7 +201,6 @@ check-sdcard: ## Check if SD card is properly detected
 	@echo "$(GREEN)SD card detected at $(SDCARD_DEVICE)$(RESET)"
 	@which lsblk > /dev/null 2>&1 && lsblk $(SDCARD_DEVICE) || true
 
-.PHONY: check-image
 check-image: ## Check if the image file exists
 	@if [ ! -f "$(IMAGE_FILE)" ]; then \
 		IMAGE_PATH=$$(ls $(IMAGE_FILE) 2>/dev/null | head -1); \
@@ -227,12 +216,10 @@ check-image: ## Check if the image file exists
 
 ##@ Utility Targets
 
-.PHONY: gitsubmodule
 gitsubmodule: setgitproxy ## Initialize and update Git submodules
 	@echo "$(BLUE)Updating submodules$(RESET)"
 	git submodule init && git submodule update
 
-.PHONY: setgitproxy
 setgitproxy: ## Set proxy for Git (user & root)
 	@echo "$(BLUE)Setting git proxy$(RESET)"
 	@if [ -n "$$SUDO_USER" ]; then \
@@ -245,7 +232,6 @@ setgitproxy: ## Set proxy for Git (user & root)
 	sudo -u root git config --global http.proxy "$(PYNQ_PROXY_URL)";
 	sudo -u root git config --global https.proxy "$(PYNQ_PROXY_URL)";
 
-.PHONY: unsetgitproxy
 unsetgitproxy: ## Unset proxy for Git (user & root)
 	@echo "$(BLUE)Unsetting git proxy$(RESET)"
 	sudo -u root git config --global --unset http.proxy || true;
@@ -258,12 +244,10 @@ unsetgitproxy: ## Unset proxy for Git (user & root)
 		git config --global --unset https.proxy || true; \
 	fi
 
-.PHONY: cleanbuild
 cleanbuild: unsetgitproxy ## Clean build artifacts
 	sudo make -C pynq/sdbuild/ clean
 	@echo "$(GREEN)Build artifacts cleaned$(RESET)"
 
-.PHONY: status
 status: ## Show build status and file information
 	@echo "$(BLUE)=== Build Status for ${BOARD_NAME} ===$(RESET)"
 	@echo "Root path: ${ROOT_PATH}"
@@ -302,7 +286,6 @@ ${PREBUILT_SDIST}: ## Download PYNQ SDist package
 
 ##@ Help System
 
-.PHONY: help
 help: ## Show this help message
 	@echo '$(BOLD)PYNQ Build System$(RESET)'
 	@echo ''
@@ -335,10 +318,9 @@ help: ## Show this help message
 	@echo ''
 
 # Add aliases for download targets
-.PHONY: download-rootfs download-sdist
 download-rootfs: ${PREBUILT_IMAGE} ## Alias for downloading rootfs
 download-sdist: ${PREBUILT_SDIST}  ## Alias for downloading sdist
 
-.PHONY: all image boot_files bsp sysroot clean base check-xsa
+.PHONY: all image boot_files bsp sysroot clean clean_bsp base check-xsa
 .PHONY: sdcard sdcard-confirm sdcard-burn sdcard-list sdcard-format sdcard-safe check-sdcard check-image
 .PHONY: gitsubmodule cleanbuild status help download-rootfs download-sdist

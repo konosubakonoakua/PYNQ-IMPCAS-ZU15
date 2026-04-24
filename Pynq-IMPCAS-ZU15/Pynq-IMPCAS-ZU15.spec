@@ -3,6 +3,7 @@ BSP_Pynq-IMPCAS-ZU15 :=
 BITSTREAM_Pynq-IMPCAS-ZU15 := base/base.bit
 FPGA_MANAGER_Pynq-IMPCAS-ZU15 := 1
 STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 := helper proxy bashrc
+STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += u-dma-buf
 STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += pynq xrt
 STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += cynq xsaloader c-periphery kernel-module-demo
 STAGE4_PACKAGES_Pynq-IMPCAS-ZU15 += epics

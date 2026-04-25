@@ -43,4 +43,6 @@ apt_install bc bison flex pkg-config libssl-dev libelf-dev libncurses-dev \
 apt_install libboost-all-dev libzmq3-dev libczmq-dev libzmq5
 apt_install libspdlog-dev libfmt-dev nlohmann-json3-dev libyaml-cpp-dev libyaml-dev
 
+apt_install gcc-12 g++-12
+
 log "[apt] done"

@@ -99,7 +99,7 @@ fi
 if ! command -v yazi >/dev/null 2>&1; then
 	gh_install_exec \
 		"sxyazi/yazi" \
-		"yazi-aarch64-unknown-linux-gnu.zip" \
+		"yazi-aarch64-unknown-linux-musl.zip" \
 		"ya yazi" \
 		--map "ya:/usr/local/bin/ya" \
 		--map "yazi:/usr/local/bin/yazi"

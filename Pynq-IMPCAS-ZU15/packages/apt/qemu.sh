@@ -30,7 +30,7 @@ apt_update
 
 # INFO: don't add sudo
 apt_install \
-	ripgrep smbclient avahi-utils btop iotop ncdu sysstat strace ltrace \
+	smbclient avahi-utils btop iotop ncdu sysstat strace ltrace \
 	u-boot-tools tio net-tools minicom libtool re2c swig npm \
 	cmake autoconf automake gdb-multiarch gdbserver valgrind meson ninja-build \
 	git-lfs screen tmux procserv xterm gawk xz-utils util-linux \

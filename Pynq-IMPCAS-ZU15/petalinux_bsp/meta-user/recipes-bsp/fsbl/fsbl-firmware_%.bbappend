@@ -1,6 +1,9 @@
 ## Copyright (C) 2021 Xilinx, Inc
 ## SPDX-License-Identifier: BSD-3-Clause
 
+python __anonymous() {
+    bb.note("==================== fsbl-firmware_%.bbappend loaded ====================")
+}
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 

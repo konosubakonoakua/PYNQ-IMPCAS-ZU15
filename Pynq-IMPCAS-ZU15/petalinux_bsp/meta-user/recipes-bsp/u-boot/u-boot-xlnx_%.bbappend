@@ -3,3 +3,7 @@
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
+python __anonymous() {
+    bb.note("==================== u-boot-xlnx_%.bbappend loaded ====================")
+}
+

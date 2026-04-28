@@ -148,6 +148,20 @@ gh_install_exec \
 	"exbootimage fpgautil mkbootimage" \
 	--into "/usr/local/bin/"
 
+cat << 'EOF' >> "${HOME}/.bashrc"
+
+# ===== yazi auto-cd wrapper =====
+function y() {
+	local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+	command yazi "$@" --cwd-file="$tmp"
+	IFS= read -r -d '' cwd < "$tmp"
+	[ "$cwd" != "$PWD" ] && [ -d "$cwd" ] && builtin cd -- "$cwd"
+	rm -f -- "$tmp"
+}
+# ================================
+
+EOF
+
 append_once 'export PATH=$HOME/.local/bin:$PATH' "${HOME}/.bashrc"
 append_once 'eval "$(starship init bash)"' "${HOME}/.bashrc"
 append_once 'eval "$(zoxide init bash)"' "${HOME}/.bashrc"

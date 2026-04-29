@@ -1,0 +1,25 @@
+From 04d0e6bb5bcf5e5bbe0e9630e87ff9d13dce88e2 Mon Sep 17 00:00:00 2001
+From: "rafael.ren" <rafael.ren@foxmail.com>
+Date: Wed, 29 Apr 2026 23:40:07 +0800
+Subject: [PATCH] scripts: setlocalversion: physically remove the '+' sign
+
+---
+ scripts/setlocalversion | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scripts/setlocalversion b/scripts/setlocalversion
+index 38b96c6797f4..0b21e0634dce 100755
+--- a/scripts/setlocalversion
++++ b/scripts/setlocalversion
+@@ -92,7 +92,7 @@ scm_version()
+ 		# If only the short version is requested, don't bother
+ 		# running further git commands
+ 		if $short; then
+-			echo "+"
++			echo ""
+ 			return
+ 		fi
+ 		# If we are past the tagged commit, we pretty print it.
+-- 
+2.34.1
+
